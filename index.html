@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<link rel="icon" href="favicon.svg">
+	<title>Noise and Persistent Vision</title>
+	<style>
+		canvas {
+			position: absolute;
+			inset: 0;
+			display: block;
+			width: 100%;
+			height: 100%;
+			object-fit: cover;
+
+			image-rendering: optimizeSpeed; 
+			image-rendering: crisp-edges;
+			image-rendering: pixelated;    
+		}
+
+		fielset {
+			position: absolute;
+			top: 0;
+			left: 0;
+			margin: 0.3em;
+			z-index: 100;
+			border: none;
+			display: block;
+		}
+
+		label {
+			position: relative;
+			display: inline-block;
+			padding: 0.3em;
+			background: #fff;
+			border: 2px solid black;
+			z-index: 100;
+		}
+
+		legend {
+			display: none;
+		}
+	</style>
+</head>
+<body>
+	<canvas width="200" height="150">
+		Canvas Not supported
+	</canvas>
+	
+	<fieldset>
+		<legend>Options</legend>
+		<label><input type="checkbox" name="rotating" id="rotating"> Auto Rotate</label>
+		<label><input type="checkbox" name="followMouse" id="followMouse" checked> Follow Mouse</label>
+		<label><input type="checkbox" name="forceRefresh" id="forceRefresh"> Force Refresh</label>
+	</fieldset>
+
+
+	<script>
+		function vectorMultiplyMatrix([x,y,z], matrix) {
+			return [
+				// wir verstehen ein Element mit 12 Elementen als 3x4 Matrix
+				// ein 3D Punkt/Vektor mal eine 3x4 Matrix ergibt wieder einen Punkt
+				/*neues X:*/ x * matrix[0] + y * matrix[1] + z * matrix[2] + matrix[3],
+				/*neues Y:*/ x * matrix[4] + y * matrix[5] + z * matrix[6] + matrix[7],
+				/*neues Z:*/ x * matrix[8] + y * matrix[9] + z * matrix[10] + matrix[11],
+			]
+		}
+		
+		function matrixMultiplyMatrix([
+		_x1,  _x2,  _x3,  _x4,
+		_y1,  _y2,  _y3,  _y4,
+		_z1,  _z2,  _z3,  _z4
+		], [
+		x1,  x2,  x3,  x4,
+		y1,  y2,  y3,  y4,
+		z1,  z2,  z3,  z4
+		]) {
+			return [
+				x1 * _x1 + x2 * _y1 + x3 * _z1 + x4 * 0,
+				x1 * _x2 + x2 * _y2 + x3 * _z2 + x4 * 0,
+				x1 * _x3 + x2 * _y3 + x3 * _z3 + x4 * 0,
+				x1 * _x4 + x2 * _y4 + x3 * _z4 + x4 * 1,
+					
+				y1 * _x1 + y2 * _y1 + y3 * _z1 + y4 * 0,
+				y1 * _x2 + y2 * _y2 + y3 * _z2 + y4 * 0,
+				y1 * _x3 + y2 * _y3 + y3 * _z3 + y4 * 0,
+				y1 * _x4 + y2 * _y4 + y3 * _z4 + y4 * 1,
+					
+				z1 * _x1 + z2 * _y1 + z3 * _z1 + z4 * 0,   
+				z1 * _x2 + z2 * _y2 + z3 * _z2 + z4 * 0,
+				z1 * _x3 + z2 * _y3 + z3 * _z3 + z4 * 0,
+				z1 * _x4 + z2 * _y4 + z3 * _z4 + z4 * 1,
+			]
+		}
+
+		function comparePolygons(a,b) {
+			var az = a.map(([x,y,z]) => z).sort((a,b) => b-a)
+			var bz = b.map(([x,y,z]) => z).sort((a,b) => b-a)
+		
+			for(let i=0;i<az.length;i++) {
+				if(Math.abs(az[i] - bz[i]) > 0.001) {
+					return bz[i] - az[i];
+				}
+			}
+			
+			return 0;
+		}
+		
+		function clockwise([x1,y1],[x2,y2],[x3,y3]) {
+			let orientierung = (y2 - y1)*(x3 - x2) - (y3 - y2)*(x2 - x1);
+
+			return orientierung >= 0;
+		}
+
+		function makeCubeWire(width, height, depth) {
+			return {
+				vertices: [
+					[width,height,depth], 
+					[-width,height, depth], 
+					[-width,-height, depth], 
+					[width,-height, depth],
+					[width,height,-depth], 
+					[-width,height, -depth], 
+					[-width,-height, -depth], 
+					[width,-height, -depth]
+				],
+				faces: [
+					[1,0,2], [3,2,0],
+					[4,5,6], [6,7,4],
+					[6,3,7], [3,6,2], 
+					[2,6,5], [2,5,1], 
+					[7,3,4], [4,3,0], 
+					[5,4,0], [5,0,1],
+				],
+				strokes: [
+					[4,0],[0,1], [1,5],[5,4],
+					[6,2],[2,3],[3,7],[7,6],
+					[0,3],[1,2],[5,6],[4,7]
+				],
+			}
+		}
+
+		function rotationX(w) {
+			return [
+				 1, 0, 0, 0,
+				 0, Math.cos(w), -Math.sin(w),  0,
+				 0, Math.sin(w),  Math.cos(w), 0,
+			]
+		}
+
+		function rotationY(w) {
+			return [
+				Math.cos(w), 0, Math.sin(w), 0,
+				0, 1, 0, 0,
+				-Math.sin(w), 0, Math.cos(w), 0,
+			]
+		}
+
+		function rotationZ(w) {
+			return [
+				 Math.cos(w), -Math.sin(w), 0,  0,
+				 Math.sin(w),  Math.cos(w), 0, 0,
+				 0, 0, 1, 0,
+			]
+		}
+
+		function translation(positionX, positionY, positionZ) {
+			return [
+				1, 0, 0, positionX,
+				0, 1, 0, -positionY,
+				0, 0, 1, positionZ,
+			]
+		}
+
+		function makeCamera(W, H, positionX, positionY, positionZ, winkelX, winkelY, winkelZ, zoom) {
+			var matrixDrehX = rotationX(winkelX);
+			var matrixDrehY = rotationY(winkelY);
+			var matrixDrehZ = rotationZ(winkelZ);
+			var matrixPosition = translation(positionX, positionY, positionZ-100+0.9*Math.exp((9-1.2*zoom)));
+			var matrixSkaliere = [
+				W/2, 0, 0, 0,
+				0, W/2, 0, 0,
+				0, 0, 0.3, 0,
+			];
+
+			return [
+				matrixDrehY, matrixDrehX, matrixDrehZ, matrixPosition, matrixSkaliere
+			].reduce(matrixMultiplyMatrix)
+		}
+
+		function transformMesh(mesh, matrix) {
+			return {
+				...mesh,
+				vertices: mesh.vertices.map((v) => vectorMultiplyMatrix(v, matrix))
+			}
+		}
+
+		function drawMesh(cam, mesh, drawLine) {
+			var vertices = mesh.vertices.map((v) => vectorMultiplyMatrix(v, cam))
+			var vertices2D = vertices.map(([x,y,z]) => [
+				x/z,
+				-y/z
+			])
+
+
+			for(var f=0;f<mesh.strokes.length;f++) {
+				var s = mesh.strokes[f]
+				drawLine(vertices2D[s[0]][0], vertices2D[s[0]][1], vertices2D[s[1]][0], vertices2D[s[1]][1])
+			}
+		}
+
+	</script>
+
+	<script>
+		const dpi = window.devicePixelRatio;
+		const canvas = document.querySelector('canvas');
+		const ctx = canvas.getContext("2d");
+
+		const cube = makeCubeWire(4,4,4)
+
+		const forceRefreshCheckBox = document.querySelector('input[name="forceRefresh"]')
+		let forceRefresh = forceRefreshCheckBox.checked
+		forceRefreshCheckBox.addEventListener('change', () => {
+			forceRefresh = forceRefreshCheckBox.checked
+		});
+
+		const rotatingCheckBox = document.querySelector('input[name="rotating"]')
+		let rotating = rotatingCheckBox.checked;
+		rotatingCheckBox.addEventListener('change', () => {
+			rotating = rotatingCheckBox.checked
+		});
+
+		const followMouseCheckBox = document.querySelector('input[name="followMouse"]')
+		let followMouse = followMouseCheckBox.checked
+		followMouseCheckBox.addEventListener('change', () => {
+			followMouse = followMouseCheckBox.checked
+		});
+
+		function mulberry32(a) {
+		    return function() {
+		      var t = a += 0x6D2B79F5;
+		      t = Math.imul(t ^ t >>> 15, t | 1);
+		      t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+		      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+		    }
+		}
+
+		var random = mulberry32(100)
+
+		function init() {
+			ctx.imageSmoothingEnabled = false;
+			ctx.antiAlias = false
+			ctx.clearRect(0,0,canvas.width, canvas.height)
+
+			for(let y=0;y<canvas.height;y++) {
+				for(let x=0;x<canvas.width;x++) {
+					if(random()<0.5) {
+						ctx.fillStyle = 'black'
+					} else {
+						ctx.fillStyle = 'white'
+					}
+
+					ctx.fillRect(x,y,1,1)
+				}
+			}
+		}
+
+		init()
+
+		function drawLine(sx, sy, tx, ty, ctx, scale = 1) {
+		    let tri = {}
+		    function getTriangle(x1,y1,x2,y2,ang) {
+		        if(Math.abs(x1-x2) > Math.abs(y1-y2)) {
+		            tri.x = Math.sign(Math.cos(ang));
+		            tri.y = Math.tan(ang)*Math.sign(Math.cos(ang));
+		            tri.long = Math.abs(x1-x2);
+		        } else { 
+		            tri.x = Math.tan((Math.PI/2)-ang)*Math.sign(Math.cos((Math.PI/2)-ang));
+		            tri.y = Math.sign(Math.cos((Math.PI/2)-ang));
+		            tri.long = Math.abs(y1-y2);
+		        }
+		    }
+		    function getAngle(x,y) { return Math.atan(y/(x==0?0.01:x))+(x<0?Math.PI:0); }let angle = getAngle(tx-sx,ty-sy); // angle of line
+		    getTriangle(sx,sy,tx,ty, angle);
+		    ctx.beginPath()
+		    for(let i=0;i<tri.long;i++) {
+		        let thispoint = {x: Math.round(sx + tri.x*i), y: Math.round(sy + tri.y*i)};
+		        // for each point along the line
+		        ctx.rect(thispoint.x*scale, // round for perfect pixels
+		                    thispoint.y*scale, // thus no aliasing
+		                    scale,scale); // fill in one pixel, 1x1
+		    }
+		    ctx.rect(Math.round(tx)*scale, // round for perfect pixels
+		                    Math.round(ty)*scale, // thus no aliasing
+		                    scale,scale); // fill in one pixel, 1x1
+		    
+		    ctx.fill()
+		}
+
+		var t = 0
+		var dirty = false
+		var baseAngleX = 0.1
+		var baseAngleY = 0.5
+
+
+		window.addEventListener('pointermove', function(evt) {
+			if(followMouse) {
+				baseAngleX = -Math.PI * (evt.clientX/window.innerWidth) - 1
+				baseAngleY = Math.PI/2 * (evt.clientY/window.innerHeight) - 1
+				dirty = true
+			}
+		})
+
+		function tick() {
+			t+=1
+			dirty = true
+		}
+
+		function render() {
+			ctx.save()
+			ctx.globalCompositeOperation = 'difference'
+			ctx.fillStyle = 'white'
+			const cam = makeCamera(10, 10, 0,0,-10,0,0,0, 1.5)
+			ctx.translate(canvas.width/2, canvas.height/2)
+			const rotZ = rotationZ(t/70*Math.PI*2)
+			const rotXX = rotationX(t/120*Math.PI*2)
+			const rotY = rotationY(baseAngleX)
+			const rotX = rotationX(baseAngleY)
+			drawMesh(cam, transformMesh(cube, [rotX,rotY,rotZ,rotXX].reduce(matrixMultiplyMatrix)), (sx,sy,tx,ty) => {
+
+				drawLine(canvas.width*2*sx,canvas.width*2*sy,canvas.width*2*tx,canvas.width*2*ty, ctx, 1)
+			})
+			ctx.restore()
+		}
+
+		function frame() {
+			setTimeout(frame, 60)
+
+			if(rotating) {
+				tick()
+			}
+			if (forceRefresh) {
+				dirty = true
+			}
+			if(dirty) {
+				render()
+			}
+
+			dirty = false
+		}
+
+
+		frame()
+	</script>
+
+
+</body>
+</html>
