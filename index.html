@@ -4,8 +4,13 @@
 	<meta charset="utf-8">
 	<meta http-equiv="X-UA-Compatible" content="IE=edge">
 	<link rel="icon" href="favicon.svg">
+	<meta name='viewport' content='width=device-width,initial-scale=1'>
 	<title>Noise and Persistent Vision</title>
 	<style>
+		html, body {
+			touch-action: none;
+		}
+
 		canvas {
 			position: absolute;
 			inset: 0;
@@ -305,6 +310,9 @@
 
 
 		window.addEventListener('pointermove', function(evt) {
+			if(!evt.isPrimary) {
+				return
+			}
 			if(followMouse) {
 				baseAngleX = -Math.PI * (evt.clientX/window.innerWidth) - 1
 				baseAngleY = Math.PI/2 * (evt.clientY/window.innerHeight) - 1
